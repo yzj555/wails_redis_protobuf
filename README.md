@@ -1,0 +1,2 @@
+# wails_redis_protobuf
+基于wails的redis连接工具，并解析在redis储存的proto数据
