@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	server "myapp/src"
+	. "myapp/src"
 	"os"
 	"strings"
 
@@ -26,24 +26,24 @@ func main() {
 		fmt.Println(err)
 		return
 	}
-	config := &server.Config{}
+	Config = &AppConfig{}
 	str := string(data)
 	str = strings.ReplaceAll(str, "window.CONF_DATA = ", "")
-	err = json.Unmarshal([]byte(str), &config)
+	err = json.Unmarshal([]byte(str), &Config)
 	if err != nil {
 		fmt.Println(err)
 		return
 	}
-	server.InitRedis(config)
-	server.LoadProtoFiles(config.Proto.Dir)
-	server.InitFuncMap()
+	InitRedis()
+	LoadProtoFiles()
+	InitFuncMap()
 	// Create an instance of the app structure
 	app := NewApp()
 
 	// Create application with options
 	err = wails.Run(&options.App{
 		//Title:  "足小Redis数据解析工具",
-		Title:  fmt.Sprintf("足小Redis数据解析工具 - %s", config.Redis.Addr),
+		Title:  fmt.Sprintf("足小Redis数据解析工具 - %s", Config.CurrentRedis),
 		Width:  1024,
 		Height: 768,
 		AssetServer: &assetserver.Options{

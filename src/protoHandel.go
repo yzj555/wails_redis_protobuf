@@ -10,17 +10,20 @@ import (
 	"github.com/jhump/protoreflect/desc/protoprint"
 	"github.com/jhump/protoreflect/dynamic"
 	"github.com/vmihailenco/msgpack/v5"
+	_ "github.com/vmihailenco/msgpack/v5"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode"
 )
 
 var protoDescList = make([]*desc.FileDescriptor, 0)
 var msgNameList = make([]string, 0)
 
 // LoadProtoFiles 从 .proto 文件加载描述符
-func LoadProtoFiles(dir string) {
+func LoadProtoFiles() {
+	dir := Config.Proto.Dir
 	var filenames []string
 	pathList := make([]string, 0)
 	filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
@@ -60,7 +63,7 @@ func LoadProtoFiles(dir string) {
 }
 
 func UnmarshalByMsgpack(data []byte) interface{} {
-	var res interface{}
+	var res map[string]interface{}
 	err := msgpack.Unmarshal(data, &res)
 	if err != nil {
 		fmt.Printf("UnmarshalByMsgpack err, %v\n", err)
@@ -186,4 +189,108 @@ func ParseProtobufToJSON(data []byte) (map[int]interface{}, error) {
 
 func GetAllMsgName() []string {
 	return msgNameList
+}
+
+func MarshalByProto(data []byte, msgName string) (*dynamic.Message, string) {
+	if msgName != "" {
+		msgName = fmt.Sprintf("pb.%s", msgName)
+	}
+	for _, desc := range protoDescList {
+		printer := &protoprint.Printer{}
+		var buf bytes.Buffer
+		printer.PrintProtoFile(desc, &buf)
+		msg := desc.FindMessage(msgName)
+		if msg != nil {
+			//再用消息描述符，动态的构造一个pb消息体
+			dMsg := dynamic.NewMessage(msg)
+			fmt.Printf("msgName: %s\n", msg)
+			//把 JSON 数据反序列化成 消息体
+			err := dMsg.UnmarshalJSON(data)
+			if err != nil {
+				fmt.Printf("UnmarshalJSON err, %v\n, %v\n", err, dMsg)
+				return nil, err.Error()
+			}
+			return dMsg, ""
+		}
+	}
+	return nil, "msgName not exist"
+}
+
+func MarshalByMsgPack(jsonStr string, msgName string) (string, error) {
+	if msgName != "" {
+		msgName = fmt.Sprintf("pb.%s", msgName)
+	}
+	var jsonData map[string]interface{}
+	err := json.Unmarshal([]byte(jsonStr), &jsonData)
+	if err != nil {
+		fmt.Printf("Unmarshal err, %v\n", err)
+		return "", err
+	}
+	for _, desc := range protoDescList {
+		printer := &protoprint.Printer{}
+		var buf bytes.Buffer
+		printer.PrintProtoFile(desc, &buf)
+		msg := desc.FindMessage(msgName)
+		if msg != nil {
+			//再用消息描述符，动态的构造一个pb消息体
+			dMsg := dynamic.NewMessage(msg)
+			//fmt.Printf("msgName: %s\n", msg)
+			temp := dMsg.GetKnownFields()
+			resJsonData := make(map[string]interface{})
+			for _, field := range temp {
+				fmt.Printf("fieldName: %s\n", field.GetName())
+				fieldName := field.GetName()
+				//确保首字母大写
+				r := []rune(fieldName)
+				r[0] = unicode.ToUpper(r[0])
+				fieldName = string(r)
+				tempVal, ok := jsonData[fieldName]
+				tempVal1, ok1 := jsonData[field.GetName()]
+				if !ok && !ok1 {
+					//return "", fmt.Errorf("fieldName not exist: %s", fieldName)
+					fmt.Printf("fieldName not exist: %s\n", fieldName)
+					continue
+				}
+				if !ok {
+					tempVal = tempVal1
+				}
+				if field.IsMap() {
+					str := tempVal.(string)
+					fields, err := MarshalByMsgPack(str, field.GetMessageType().GetName())
+					if err != nil {
+						fmt.Printf("MarshalByMsgPack err, %v\n", err)
+						return "", err
+					}
+					tempVal = fields
+				}
+				jsonName := field.GetJSONName()
+				resJsonData[jsonName] = tempVal
+			}
+			resJson, err := json.Marshal(resJsonData)
+			if err != nil {
+				fmt.Printf("Marshal err, %v\n", err)
+				return "", err
+			}
+			//把 JSON 数据反序列化成 消息体
+			err = dMsg.UnmarshalJSON(resJson)
+			if err != nil {
+				fmt.Printf("UnmarshalJSON err, %v\n, %v\n", err, dMsg)
+				return "", err
+			}
+			fmt.Printf("dMsg: %v\n", dMsg)
+			//把 消息体序列化成二进制数据
+			dbStr, err := msgpack.Marshal(&dMsg)
+			if err != nil {
+				fmt.Printf("Marshal err, %v\n", err)
+				return "", err
+			}
+			//pbStr, err := dMsg.Marshal()
+			//if err != nil {
+			//	fmt.Printf("Marshal err, %v\n", err)
+			//	return "", err
+			//}
+			return string(dbStr), nil
+		}
+	}
+	return "", fmt.Errorf("msgName not exist")
 }
